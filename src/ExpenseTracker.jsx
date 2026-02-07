@@ -15,41 +15,41 @@ const ExpenseTracker = ({ session }) => {
 
   // Cargar datos desde Supabase
   useEffect(() => {
-    loadData();
-  }, []);
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        
+        // Cargar cuentas
+        const { data: accountsData } = await supabase
+          .from('accounts')
+          .select('*')
+          .eq('user_id', session.user.id);
+        
+        // Cargar transacciones
+        const { data: transactionsData } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('date', { ascending: false });
+        
+        // Cargar cuotas
+        const { data: installmentsData } = await supabase
+          .from('installments')
+          .select('*')
+          .eq('user_id', session.user.id);
+        
+        setAccounts(accountsData || []);
+        setTransactions(transactionsData || []);
+        setInstallments(installmentsData || []);
+      } catch (error) {
+        console.error('Error loading data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      
-      // Cargar cuentas
-      const { data: accountsData } = await supabase
-        .from('accounts')
-        .select('*')
-        .eq('user_id', session.user.id);
-      
-      // Cargar transacciones
-      const { data: transactionsData } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('date', { ascending: false });
-      
-      // Cargar cuotas
-      const { data: installmentsData } = await supabase
-        .from('installments')
-        .select('*')
-        .eq('user_id', session.user.id);
-      
-      setAccounts(accountsData || []);
-      setTransactions(transactionsData || []);
-      setInstallments(installmentsData || []);
-    } catch (error) {
-      console.error('Error loading data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    loadData();
+  }, [session.user.id]);
 
   const totalBalance = accounts.reduce((sum, acc) => sum + acc.balance, 0);
   
