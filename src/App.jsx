@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseConfig';
-import Auth from './Auth';
-import ExpenseTracker from './ExpenseTracker';
+import Auth from './Auth.jsx';
+import ExpenseTracker from './ExpenseTracker.jsx';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -10,6 +10,7 @@ function App() {
   useEffect(() => {
     // Obtener sesión inicial
     supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log('✅ Session loaded:', session);
       setSession(session);
       setLoading(false);
     });
@@ -18,11 +19,19 @@ function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log('🔄 Auth state changed:', _event, session);
       setSession(session);
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (session) {
+      console.log('👤 User ID:', session.user.id);
+      console.log('📧 User email:', session.user.email);
+    }
+  }, [session]);
 
   if (loading) {
     return (
