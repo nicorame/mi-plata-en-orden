@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseConfig';
-import Auth from './Auth.jsx';
-import ExpenseTracker from './ExpenseTracker.jsx';
+import Auth from './Auth';
+import ExpenseTracker from './ExpenseTracker';
 
 function App() {
   const [session, setSession] = useState(null);
