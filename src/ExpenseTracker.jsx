@@ -1,32 +1,55 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, TrendingUp, TrendingDown, Wallet, LogOut } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { supabase } from './supabaseConfig';
 
 const ExpenseTracker = ({ session }) => {
-  const [accounts, setAccounts] = useState([
-    { id: 1, name: 'Efectivo', balance: 50000, color: '#6366f1' },
-    { id: 2, name: 'Banco', balance: 150000, color: '#8b5cf6' }
-  ]);
-  
-  const [transactions, setTransactions] = useState([
-    { id: 1, type: 'expense', amount: 25000, description: 'Supermercado', accountId: 1, date: '2024-02-06', category: 'Comida' },
-    { id: 2, type: 'income', amount: 180000, description: 'Salario', accountId: 2, date: '2024-02-01', category: 'Trabajo' },
-    { id: 3, type: 'expense', amount: 45000, description: 'Alquiler', accountId: 2, date: '2024-02-03', category: 'Vivienda' },
-    { id: 4, type: 'expense', amount: 8000, description: 'Netflix', accountId: 2, date: '2024-02-05', category: 'Entretenimiento' },
-    { id: 5, type: 'expense', amount: 15000, description: 'Combustible', accountId: 1, date: '2024-01-28', category: 'Transporte' },
-    { id: 6, type: 'income', amount: 180000, description: 'Salario', accountId: 1, date: '2024-01-25', category: 'Trabajo' },
-    { id: 7, type: 'expense', amount: 20000, description: 'Supermercado', accountId: 1, date: '2024-01-20', category: 'Comida' },
-    { id: 8, type: 'expense', amount: 45000, description: 'Alquiler', accountId: 2, date: '2024-01-10', category: 'Vivienda' },
-  ]);
-  
-  const [installments, setInstallments] = useState([
-    { id: 1, name: 'Notebook', total: 300000, paid: 100000, installmentsPaid: 2, totalInstallments: 6 }
-  ]);
+  const [accounts, setAccounts] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [installments, setInstallments] = useState([]);
+  const [loading, setLoading] = useState(true);
   
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
   const [timeRange, setTimeRange] = useState('3m'); // 3m, 6m, 1y
+
+  // Cargar datos desde Supabase
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      
+      // Cargar cuentas
+      const { data: accountsData } = await supabase
+        .from('accounts')
+        .select('*')
+        .eq('user_id', session.user.id);
+      
+      // Cargar transacciones
+      const { data: transactionsData } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('date', { ascending: false });
+      
+      // Cargar cuotas
+      const { data: installmentsData } = await supabase
+        .from('installments')
+        .select('*')
+        .eq('user_id', session.user.id);
+      
+      setAccounts(accountsData || []);
+      setTransactions(transactionsData || []);
+      setInstallments(installmentsData || []);
+    } catch (error) {
+      console.error('Error loading data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const totalBalance = accounts.reduce((sum, acc) => sum + acc.balance, 0);
   
@@ -131,23 +154,38 @@ const ExpenseTracker = ({ session }) => {
       date: new Date().toISOString().split('T')[0]
     });
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
       e.preventDefault();
-      const newTransaction = {
-        ...formData,
-        id: Date.now(),
-        amount: parseFloat(formData.amount)
-      };
-      
-      setTransactions([newTransaction, ...transactions]);
-      
-      setAccounts(accounts.map(acc => 
-        acc.id === formData.accountId 
-          ? { ...acc, balance: acc.balance + (formData.type === 'income' ? parseFloat(formData.amount) : -parseFloat(formData.amount)) }
-          : acc
-      ));
-      
-      setShowModal(false);
+      try {
+        const { data, error } = await supabase
+          .from('transactions')
+          .insert([{
+            user_id: session.user.id,
+            account_id: formData.accountId,
+            type: formData.type,
+            amount: parseFloat(formData.amount),
+            description: formData.description,
+            category: formData.category,
+            date: formData.date
+          }])
+          .select();
+
+        if (error) throw error;
+        
+        setTransactions([data[0], ...transactions]);
+        
+        // Actualizar balance de cuenta localmente
+        setAccounts(accounts.map(acc => 
+          acc.id === formData.accountId 
+            ? { ...acc, balance: acc.balance + (formData.type === 'income' ? parseFloat(formData.amount) : -parseFloat(formData.amount)) }
+            : acc
+        ));
+        
+        setShowModal(false);
+      } catch (error) {
+        console.error('Error adding transaction:', error);
+        alert('Error al agregar transacción');
+      }
     };
 
     return (
@@ -276,14 +314,27 @@ const ExpenseTracker = ({ session }) => {
       color: '#6366f1'
     });
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
       e.preventDefault();
-      setAccounts([...accounts, {
-        ...formData,
-        id: Date.now(),
-        balance: parseFloat(formData.balance)
-      }]);
-      setShowModal(false);
+      try {
+        const { data, error } = await supabase
+          .from('accounts')
+          .insert([{
+            user_id: session.user.id,
+            name: formData.name,
+            balance: parseFloat(formData.balance),
+            color: formData.color
+          }])
+          .select();
+
+        if (error) throw error;
+        
+        setAccounts([...accounts, data[0]]);
+        setShowModal(false);
+      } catch (error) {
+        console.error('Error adding account:', error);
+        alert('Error al crear cuenta');
+      }
     };
 
     return (
@@ -335,20 +386,32 @@ const ExpenseTracker = ({ session }) => {
       installmentsPaid: 0
     });
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
       e.preventDefault();
-      const total = parseFloat(formData.total);
-      const paid = (total / formData.totalInstallments) * formData.installmentsPaid;
-      
-      setInstallments([...installments, {
-        ...formData,
-        id: Date.now(),
-        total,
-        paid,
-        totalInstallments: parseInt(formData.totalInstallments),
-        installmentsPaid: parseInt(formData.installmentsPaid)
-      }]);
-      setShowModal(false);
+      try {
+        const total = parseFloat(formData.total);
+        const paid = (total / formData.totalInstallments) * formData.installmentsPaid;
+        
+        const { data, error } = await supabase
+          .from('installments')
+          .insert([{
+            user_id: session.user.id,
+            name: formData.name,
+            total: total,
+            paid: paid,
+            installments_paid: parseInt(formData.installmentsPaid),
+            total_installments: parseInt(formData.totalInstallments)
+          }])
+          .select();
+
+        if (error) throw error;
+        
+        setInstallments([...installments, data[0]]);
+        setShowModal(false);
+      } catch (error) {
+        console.error('Error adding installment:', error);
+        alert('Error al crear cuota');
+      }
     };
 
     return (
@@ -432,6 +495,24 @@ const ExpenseTracker = ({ session }) => {
     return null;
   };
 
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: '#191919',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#fff'
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>💰</div>
+          <div>Cargando tus datos...</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -450,7 +531,7 @@ const ExpenseTracker = ({ session }) => {
         zIndex: 100
       }}>
         <div style={{ maxWidth: '1400px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>💰 Mi Plata en Orden</h1>
+          <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>💰 Plata en Orden</h1>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {session?.user?.email && (
