@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, TrendingUp, TrendingDown, Wallet, Calendar, ChevronDown, LogOut } from 'lucide-react';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import React, { useState } from 'react';
+import { Plus, TrendingUp, TrendingDown, Wallet, LogOut } from 'lucide-react';
+import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { supabase } from './supabaseConfig';
 
 const ExpenseTracker = ({ session }) => {

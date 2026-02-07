@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { supabase } from './supabaseConfig';
 
 const Auth = () => {
@@ -7,7 +7,7 @@ const Auth = () => {
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase.auth.signInWithOAuth({
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: window.location.origin
