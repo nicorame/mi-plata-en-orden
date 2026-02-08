@@ -13,16 +13,11 @@ const ExpenseTracker = ({ session }) => {
   const [modalType, setModalType] = useState('');
   const [timeRange, setTimeRange] = useState('3m'); // 3m, 6m, 1y
 
-  // TEMPORALMENTE DESHABILITADO PARA DEBUG
   // Cargar datos desde Supabase
   useEffect(() => {
     console.log('✅ ExpenseTracker montado. User ID:', session?.user?.id);
     console.log('✅ User email:', session?.user?.email);
     
-    // Dejar arrays vacíos por ahora para verificar que la sesión funciona
-    setLoading(false);
-    
-    /* DESCOMENTAR ESTO DESPUÉS DE VERIFICAR QUE LA SESIÓN FUNCIONA
     const loadData = async () => {
       try {
         setLoading(true);
@@ -69,7 +64,6 @@ const ExpenseTracker = ({ session }) => {
         setInstallments(installmentsData || []);
       } catch (error) {
         console.error('❌ Fatal error loading data:', error);
-        // Mostrar app vacía en lugar de crashear
         setAccounts([]);
         setTransactions([]);
         setInstallments([]);
@@ -79,8 +73,7 @@ const ExpenseTracker = ({ session }) => {
     };
 
     loadData();
-    */
-  }, [session]);
+  }, [session.user.id]);
 
   const totalBalance = accounts.reduce((sum, acc) => sum + acc.balance, 0);
   
