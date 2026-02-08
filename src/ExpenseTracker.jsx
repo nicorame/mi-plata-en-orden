@@ -11,10 +11,15 @@ const ExpenseTracker = ({ session }) => {
   
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
-  const [timeRange, setTimeRange] = useState('3m'); // 3m, 6m, 1y
+  const [timeRange, setTimeRange] = useState('3m'); // 3m, 6m, 1y, custom
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [selectedCategories, setSelectedCategories] = useState([]);
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [editingAccount, setEditingAccount] = useState(null);
+  const [editingInstallment, setEditingInstallment] = useState(null);
   const [toast, setToast] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   // Función para mostrar notificaciones
   const showToast = (message, type = 'success') => {
@@ -85,19 +90,52 @@ const ExpenseTracker = ({ session }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.user.id]);
 
+  // Cerrar menú de usuario al hacer click fuera
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (showUserMenu && !e.target.closest('button')) {
+        setShowUserMenu(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showUserMenu]);
+
   const totalBalance = accounts.reduce((sum, acc) => sum + acc.balance, 0);
   
   const getFilteredTransactions = () => {
+    if (timeRange === 'custom') {
+      // Filtrar por mes específico
+      const filtered = transactions.filter(t => t.date.slice(0, 7) === selectedMonth);
+      
+      // Filtrar por categorías si hay seleccionadas
+      if (selectedCategories.length > 0) {
+        return filtered.filter(t => selectedCategories.includes(t.category));
+      }
+      return filtered;
+    }
+    
+    // Filtro por rango (3m, 6m, 1y)
     const now = new Date();
     const months = timeRange === '3m' ? 3 : timeRange === '6m' ? 6 : 12;
     const cutoffDate = new Date(now.setMonth(now.getMonth() - months));
     
-    return transactions.filter(t => new Date(t.date) >= cutoffDate);
+    const filtered = transactions.filter(t => new Date(t.date) >= cutoffDate);
+    
+    // Filtrar por categorías si hay seleccionadas
+    if (selectedCategories.length > 0) {
+      return filtered.filter(t => selectedCategories.includes(t.category));
+    }
+    return filtered;
   };
 
   const filteredTransactions = getFilteredTransactions();
   const totalIncome = filteredTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
   const totalExpense = filteredTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+
+  // Obtener todas las categorías únicas
+  const allCategories = [...new Set(transactions.map(t => t.category).filter(Boolean))].sort();
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-AR', {
@@ -171,33 +209,37 @@ const ExpenseTracker = ({ session }) => {
   };
 
   const deleteTransaction = async (transactionId) => {
-    if (!window.confirm('¿Estás seguro de que quieres eliminar esta transacción?')) {
-      return;
-    }
+    setConfirmDialog({
+      title: '🗑️ Eliminar transacción',
+      message: '¿Estás seguro de que quieres eliminar esta transacción?',
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase
+            .from('transactions')
+            .delete()
+            .eq('id', transactionId);
 
-    try {
-      const { error } = await supabase
-        .from('transactions')
-        .delete()
-        .eq('id', transactionId);
+          if (error) throw error;
 
-      if (error) throw error;
-
-      // Actualizar estado local
-      setTransactions(transactions.filter(t => t.id !== transactionId));
-      
-      // Recargar cuentas para actualizar balances
-      const { data: accountsData } = await supabase
-        .from('accounts')
-        .select('*')
-        .eq('user_id', session.user.id);
-      
-      setAccounts(accountsData || []);
-      showToast('🗑️ Transacción eliminada correctamente', 'success');
-    } catch (error) {
-      console.error('Error al eliminar transacción:', error);
-      showToast('❌ Error al eliminar la transacción', 'error');
-    }
+          // Actualizar estado local
+          setTransactions(transactions.filter(t => t.id !== transactionId));
+          
+          // Recargar cuentas para actualizar balances
+          const { data: accountsData } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('user_id', session.user.id);
+          
+          setAccounts(accountsData || []);
+          showToast('🗑️ Transacción eliminada correctamente', 'success');
+        } catch (error) {
+          console.error('Error al eliminar transacción:', error);
+          showToast('❌ Error al eliminar la transacción', 'error');
+        }
+        setConfirmDialog(null);
+      },
+      onCancel: () => setConfirmDialog(null)
+    });
   };
 
   const editTransaction = (transaction) => {
@@ -207,39 +249,74 @@ const ExpenseTracker = ({ session }) => {
   };
 
   const deleteAccount = async (accountId) => {
-    if (!window.confirm('¿Estás seguro de que quieres eliminar esta cuenta? Se eliminarán todas las transacciones asociadas.')) {
-      return;
-    }
+    setConfirmDialog({
+      title: '🗑️ Eliminar cuenta',
+      message: '¿Estás seguro de que quieres eliminar esta cuenta? Se eliminarán todas las transacciones asociadas.',
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase
+            .from('accounts')
+            .delete()
+            .eq('id', accountId);
 
-    try {
-      const { error } = await supabase
-        .from('accounts')
-        .delete()
-        .eq('id', accountId);
+          if (error) throw error;
 
-      if (error) throw error;
-
-      // Actualizar estado local
-      setAccounts(accounts.filter(a => a.id !== accountId));
-      
-      // Recargar transacciones (las asociadas se habrán eliminado por CASCADE)
-      const { data: transactionsData } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('date', { ascending: false });
-      
-      setTransactions(transactionsData || []);
-      showToast('🗑️ Cuenta eliminada correctamente', 'success');
-    } catch (error) {
-      console.error('Error al eliminar cuenta:', error);
-      showToast('❌ Error al eliminar la cuenta', 'error');
-    }
+          // Actualizar estado local
+          setAccounts(accounts.filter(a => a.id !== accountId));
+          
+          // Recargar transacciones (las asociadas se habrán eliminado por CASCADE)
+          const { data: transactionsData } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('user_id', session.user.id)
+            .order('date', { ascending: false });
+          
+          setTransactions(transactionsData || []);
+          showToast('🗑️ Cuenta eliminada correctamente', 'success');
+        } catch (error) {
+          console.error('Error al eliminar cuenta:', error);
+          showToast('❌ Error al eliminar la cuenta', 'error');
+        }
+        setConfirmDialog(null);
+      },
+      onCancel: () => setConfirmDialog(null)
+    });
   };
 
   const editAccount = (account) => {
     setEditingAccount(account);
     setModalType('account');
+    setShowModal(true);
+  };
+
+  const deleteInstallment = async (installmentId) => {
+    setConfirmDialog({
+      title: '🗑️ Eliminar cuota',
+      message: '¿Estás seguro de que quieres eliminar esta compra en cuotas?',
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase
+            .from('installments')
+            .delete()
+            .eq('id', installmentId);
+
+          if (error) throw error;
+
+          setInstallments(installments.filter(i => i.id !== installmentId));
+          showToast('🗑️ Cuota eliminada correctamente', 'success');
+        } catch (error) {
+          console.error('Error al eliminar cuota:', error);
+          showToast('❌ Error al eliminar la cuota', 'error');
+        }
+        setConfirmDialog(null);
+      },
+      onCancel: () => setConfirmDialog(null)
+    });
+  };
+
+  const editInstallment = (installment) => {
+    setEditingInstallment(installment);
+    setModalType('installment');
     setShowModal(true);
   };
 
@@ -572,45 +649,86 @@ const ExpenseTracker = ({ session }) => {
   };
 
   const AddInstallmentModal = () => {
-    const [formData, setFormData] = useState({
-      name: '',
-      total: '',
-      totalInstallments: '',
-      installmentsPaid: 0
-    });
+    const [formData, setFormData] = useState(
+      editingInstallment ? {
+        name: editingInstallment.name,
+        total: editingInstallment.total.toString(),
+        totalInstallments: editingInstallment.total_installments.toString(),
+        installmentsPaid: editingInstallment.installments_paid.toString()
+      } : {
+        name: '',
+        total: '',
+        totalInstallments: '',
+        installmentsPaid: '0'
+      }
+    );
 
     const handleSubmit = async (e) => {
       e.preventDefault();
       try {
         const total = parseFloat(formData.total);
-        const paid = (total / formData.totalInstallments) * formData.installmentsPaid;
+        const installmentsPaid = parseInt(formData.installmentsPaid);
+        const totalInstallments = parseInt(formData.totalInstallments);
+        const paid = (total / totalInstallments) * installmentsPaid;
         
-        const { data, error } = await supabase
-          .from('installments')
-          .insert([{
-            user_id: session.user.id,
-            name: formData.name,
-            total: total,
-            paid: paid,
-            installments_paid: parseInt(formData.installmentsPaid),
-            total_installments: parseInt(formData.totalInstallments)
-          }])
-          .select();
+        if (editingInstallment) {
+          // Editar cuota existente
+          const { data, error } = await supabase
+            .from('installments')
+            .update({
+              name: formData.name,
+              total: total,
+              paid: paid,
+              installments_paid: installmentsPaid,
+              total_installments: totalInstallments
+            })
+            .eq('id', editingInstallment.id)
+            .select();
 
-        if (error) throw error;
+          if (error) throw error;
+          
+          setInstallments(installments.map(i => 
+            i.id === editingInstallment.id ? data[0] : i
+          ));
+          showToast('✅ Cuota actualizada correctamente', 'success');
+        } else {
+          // Crear nueva cuota
+          const { data, error } = await supabase
+            .from('installments')
+            .insert([{
+              user_id: session.user.id,
+              name: formData.name,
+              total: total,
+              paid: paid,
+              installments_paid: installmentsPaid,
+              total_installments: totalInstallments
+            }])
+            .select();
+
+          if (error) throw error;
+          
+          setInstallments([...installments, data[0]]);
+          showToast('✅ Compra en cuotas creada', 'success');
+        }
         
-        setInstallments([...installments, data[0]]);
         setShowModal(false);
-        showToast('✅ Compra en cuotas creada', 'success');
+        setEditingInstallment(null);
       } catch (error) {
-        console.error('Error adding installment:', error);
-        showToast('❌ Error al crear cuota', 'error');
+        console.error('Error saving installment:', error);
+        showToast('❌ Error al guardar cuota', 'error');
       }
     };
 
+    const handleClose = () => {
+      setShowModal(false);
+      setEditingInstallment(null);
+    };
+
     return (
-      <Modal onClose={() => setShowModal(false)}>
-        <h2 style={{ marginBottom: '24px', fontSize: '24px', fontWeight: '700' }}>🛒 Nueva Compra en Cuotas</h2>
+      <Modal onClose={handleClose}>
+        <h2 style={{ marginBottom: '24px', fontSize: '24px', fontWeight: '700' }}>
+          {editingInstallment ? '💳 Actualizar Cuotas' : '🛒 Nueva Compra en Cuotas'}
+        </h2>
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Nombre</label>
@@ -646,14 +764,85 @@ const ExpenseTracker = ({ session }) => {
           </div>
           
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Cuotas Pagadas</label>
-            <input
-              type="number"
-              value={formData.installmentsPaid}
-              onChange={(e) => setFormData({...formData, installmentsPaid: e.target.value})}
-              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
-              min="0"
-            />
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>
+              Cuotas Pagadas
+              {formData.totalInstallments && (
+                <span style={{ opacity: 0.6, fontSize: '12px', marginLeft: '8px' }}>
+                  ({formData.installmentsPaid} de {formData.totalInstallments})
+                </span>
+              )}
+            </label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const current = parseInt(formData.installmentsPaid) || 0;
+                  if (current > 0) {
+                    setFormData({...formData, installmentsPaid: (current - 1).toString()});
+                  }
+                }}
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '8px',
+                  border: '1px solid #2a2a2a',
+                  background: '#1f1f1f',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                  fontWeight: 'bold',
+                  minWidth: '48px'
+                }}
+              >
+                −
+              </button>
+              <input
+                type="number"
+                value={formData.installmentsPaid}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 0;
+                  const max = parseInt(formData.totalInstallments) || 999;
+                  if (value >= 0 && value <= max) {
+                    setFormData({...formData, installmentsPaid: e.target.value});
+                  }
+                }}
+                style={{ 
+                  flex: 1, 
+                  padding: '12px', 
+                  borderRadius: '8px', 
+                  border: '1px solid #2a2a2a', 
+                  background: '#0d0d0d', 
+                  color: '#fff',
+                  textAlign: 'center',
+                  fontSize: '16px',
+                  fontWeight: '600'
+                }}
+                min="0"
+                max={formData.totalInstallments || 999}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const current = parseInt(formData.installmentsPaid) || 0;
+                  const max = parseInt(formData.totalInstallments) || 999;
+                  if (current < max) {
+                    setFormData({...formData, installmentsPaid: (current + 1).toString()});
+                  }
+                }}
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '8px',
+                  border: '1px solid #2a2a2a',
+                  background: '#1f1f1f',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                  fontWeight: 'bold',
+                  minWidth: '48px'
+                }}
+              >
+                +
+              </button>
+            </div>
           </div>
           
           <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
@@ -712,7 +901,7 @@ const ExpenseTracker = ({ session }) => {
       minHeight: '100vh',
       background: '#191919',
       color: '#fff',
-      fontFamily: "'Inter', system-ui, sans-serif",
+      fontFamily: "'Roboto', -apple-system, BlinkMacSystemFont, sans-serif",
       padding: '0'
     }}>
       {/* Header */}
@@ -724,16 +913,113 @@ const ExpenseTracker = ({ session }) => {
         top: 0,
         zIndex: 100
       }}>
-        <div style={{ maxWidth: '1400px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>💰 Mi Plata en Orden</h1>
-          
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {session?.user?.email && (
-              <span style={{ fontSize: '14px', color: '#9ca3af' }}>
-                {session.user.email}
-              </span>
-            )}
+        <div style={{ 
+          maxWidth: '1400px', 
+          margin: '0 auto'
+        }}>
+          {/* Title - Top */}
+          <h1 style={{ 
+            fontSize: '22px', 
+            fontWeight: '700', 
+            margin: '0 0 16px 0',
+            textAlign: 'center'
+          }}>
+            💰 Mi Plata en Orden
+          </h1>
+
+          {/* Buttons Row - Bottom */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '12px'
+          }}>
+            {/* User Menu - Left */}
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #2a2a2a',
+                  borderRadius: '50%',
+                  width: '44px',
+                  height: '44px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  fontSize: '20px',
+                  transition: 'all 0.2s'
+                }}
+                onMouseOver={(e) => e.currentTarget.style.borderColor = '#10b981'}
+                onMouseOut={(e) => e.currentTarget.style.borderColor = '#2a2a2a'}
+              >
+                👤
+              </button>
+
+              {/* Dropdown Menu */}
+              {showUserMenu && (
+                <div style={{
+                  position: 'absolute',
+                  top: '54px',
+                  left: 0,
+                  background: '#1f1f1f',
+                  border: '1px solid #2a2a2a',
+                  borderRadius: '12px',
+                  padding: '12px',
+                  minWidth: '240px',
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                  zIndex: 1000,
+                  animation: 'slideUp 0.2s ease'
+                }}>
+                  {/* Email */}
+                  {session?.user?.email && (
+                    <div style={{
+                      padding: '12px',
+                      borderBottom: '1px solid #2a2a2a',
+                      marginBottom: '8px'
+                    }}>
+                      <div style={{ fontSize: '12px', opacity: 0.6, marginBottom: '4px' }}>
+                        Cuenta
+                      </div>
+                      <div style={{ fontSize: '14px', fontWeight: '500' }}>
+                        {session.user.email}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Logout Button */}
+                  <button
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      handleLogout();
+                    }}
+                    style={{
+                      width: '100%',
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      fontSize: '14px',
+                      fontWeight: '500',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}
+                    onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <LogOut size={18} />
+                    Cerrar sesión
+                  </button>
+                </div>
+              )}
+            </div>
             
+            {/* Add Button - Right */}
             <button
               onClick={() => openModal('transaction')}
               style={{
@@ -746,28 +1032,12 @@ const ExpenseTracker = ({ session }) => {
                 fontWeight: '600',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px'
+                justifyContent: 'center',
+                gap: '8px',
+                flex: 1
               }}
             >
               <Plus size={20} /> Agregar
-            </button>
-
-            <button
-              onClick={handleLogout}
-              style={{
-                background: 'transparent',
-                border: '1px solid #2a2a2a',
-                padding: '12px',
-                borderRadius: '8px',
-                color: '#fff',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}
-              title="Cerrar sesión"
-            >
-              <LogOut size={20} />
             </button>
           </div>
         </div>
@@ -897,28 +1167,100 @@ const ExpenseTracker = ({ session }) => {
 
         {/* Gráficos Section */}
         <div style={{ marginBottom: '32px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-            <h2 style={{ fontSize: '20px', fontWeight: '600' }}>📊 Evolución de tus finanzas</h2>
-            <div style={{ display: 'flex', gap: '8px', background: '#1f1f1f', padding: '4px', borderRadius: '8px', border: '1px solid #2a2a2a' }}>
-              {['3m', '6m', '1y'].map(range => (
-                <button
-                  key={range}
-                  onClick={() => setTimeRange(range)}
+          <div style={{ marginBottom: '20px' }}>
+            <h2 style={{ fontSize: '20px', fontWeight: '600', marginBottom: '16px' }}>📊 Evolución de tus finanzas</h2>
+            
+            {/* Time Range Selector */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', gap: '8px', background: '#1f1f1f', padding: '4px', borderRadius: '8px', border: '1px solid #2a2a2a' }}>
+                {['3m', '6m', '1y', 'custom'].map(range => (
+                  <button
+                    key={range}
+                    onClick={() => setTimeRange(range)}
+                    style={{
+                      background: timeRange === range ? '#10b981' : 'transparent',
+                      border: 'none',
+                      padding: '8px 16px',
+                      borderRadius: '6px',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: timeRange === range ? '600' : '400'
+                    }}
+                  >
+                    {range === '3m' ? '3 meses' : range === '6m' ? '6 meses' : range === '1y' ? '1 año' : '📅 Mes específico'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Month Selector */}
+              {timeRange === 'custom' && (
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
                   style={{
-                    background: timeRange === range ? '#10b981' : 'transparent',
-                    border: 'none',
                     padding: '8px 16px',
-                    borderRadius: '6px',
+                    borderRadius: '8px',
+                    border: '1px solid #2a2a2a',
+                    background: '#1f1f1f',
                     color: '#fff',
-                    cursor: 'pointer',
                     fontSize: '14px',
-                    fontWeight: timeRange === range ? '600' : '400'
+                    cursor: 'pointer'
                   }}
-                >
-                  {range === '3m' ? '3 meses' : range === '6m' ? '6 meses' : '1 año'}
-                </button>
-              ))}
+                />
+              )}
             </div>
+
+            {/* Category Filter */}
+            {allCategories.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontSize: '14px', opacity: 0.6, marginBottom: '8px' }}>
+                  Filtrar por categorías:
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  <button
+                    onClick={() => setSelectedCategories([])}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      border: selectedCategories.length === 0 ? '2px solid #10b981' : '1px solid #2a2a2a',
+                      background: selectedCategories.length === 0 ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: selectedCategories.length === 0 ? '600' : '400'
+                    }}
+                  >
+                    Todas
+                  </button>
+                  {allCategories.map(category => (
+                    <button
+                      key={category}
+                      onClick={() => {
+                        if (selectedCategories.includes(category)) {
+                          setSelectedCategories(selectedCategories.filter(c => c !== category));
+                        } else {
+                          setSelectedCategories([...selectedCategories, category]);
+                        }
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        border: selectedCategories.includes(category) ? '2px solid #10b981' : '1px solid #2a2a2a',
+                        background: selectedCategories.includes(category) ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: selectedCategories.includes(category) ? '600' : '400'
+                      }}
+                    >
+                      {category}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div style={{ 
@@ -1006,7 +1348,7 @@ const ExpenseTracker = ({ session }) => {
             border: '1px solid #2a2a2a'
           }}>
             <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px' }}>
-              🏆 Ranking de Categorías
+              💰 Ranking de Categorías
             </h3>
             
             {categoryData.length > 0 ? (
@@ -1177,7 +1519,7 @@ const ExpenseTracker = ({ session }) => {
                     }} />
                   </div>
                   
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '12px' }}>
                     <div>
                       <span style={{ opacity: 0.5 }}>Pagado: </span>
                       <span style={{ color: '#10b981', fontWeight: '600' }}>{formatCurrency(item.paid)}</span>
@@ -1186,6 +1528,60 @@ const ExpenseTracker = ({ session }) => {
                       <span style={{ opacity: 0.5 }}>Restante: </span>
                       <span style={{ color: '#ef4444', fontWeight: '600' }}>{formatCurrency(remaining)}</span>
                     </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                    <button
+                      onClick={() => editInstallment(item)}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid #2a2a2a',
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        transition: 'all 0.2s',
+                        flex: 1,
+                        fontWeight: '500',
+                        color: '#ffffff'
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.background = '#10b98110';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      title="Pagar cuota"
+                    >
+                      💳 Pagar cuota
+                    </button>
+                    <button
+                      onClick={() => deleteInstallment(item.id)}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid #2a2a2a',
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        transition: 'all 0.2s',
+                        flex: 1,
+                        color: '#ffffff'
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.background = '#ef444410';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      title="Eliminar"
+                    >
+                      🗑️
+                    </button>
                   </div>
                 </div>
               );
@@ -1221,8 +1617,8 @@ const ExpenseTracker = ({ session }) => {
           background: #1f1f1f;
           padding: 32px;
           borderRadius: 16px;
-          maxWidth: 500px;
-          width: 100%;
+          maxWidth: 440px;
+          width: 70%;
           border: 1px solid #2a2a2a;
           animation: slideUp 0.3s ease;
         }
@@ -1254,6 +1650,7 @@ const ExpenseTracker = ({ session }) => {
         @media (max-width: 768px) {
           .modal-content {
             padding: 24px;
+            width: 100%;
           }
         }
         
@@ -1265,6 +1662,43 @@ const ExpenseTracker = ({ session }) => {
           to {
             transform: translateX(0);
             opacity: 1;
+          }
+        }
+        
+        @keyframes slideInBounce {
+          0% {
+            transform: translateX(400px) scale(0.8);
+            opacity: 0;
+          }
+          50% {
+            transform: translateX(-10px) scale(1.02);
+          }
+          100% {
+            transform: translateX(0) scale(1);
+            opacity: 1;
+          }
+        }
+        
+        @keyframes popIn {
+          0% {
+            transform: scale(0);
+            opacity: 0;
+          }
+          50% {
+            transform: scale(1.2);
+          }
+          100% {
+            transform: scale(1);
+            opacity: 1;
+          }
+        }
+        
+        @keyframes shrink {
+          from {
+            width: 100%;
+          }
+          to {
+            width: 0%;
           }
         }
         
@@ -1286,26 +1720,162 @@ const ExpenseTracker = ({ session }) => {
           position: 'fixed',
           top: '24px',
           right: '24px',
-          background: toast.type === 'success' ? '#1f1f1f' : '#1f1f1f',
-          border: `1px solid ${toast.type === 'success' ? '#10b981' : '#ef4444'}`,
-          borderLeft: `4px solid ${toast.type === 'success' ? '#10b981' : '#ef4444'}`,
-          padding: '16px 20px',
-          borderRadius: '12px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          background: 'linear-gradient(135deg, #1f1f1f 0%, #2a2a2a 100%)',
+          border: '1px solid #3a3a3a',
+          borderRadius: '16px',
+          boxShadow: `
+            0 10px 40px rgba(0, 0, 0, 0.4),
+            0 4px 20px rgba(0, 0, 0, 0.2),
+            inset 0 1px 0 rgba(255, 255, 255, 0.1)
+          `,
+          padding: '20px 24px',
+          minWidth: '320px',
+          maxWidth: '450px',
           zIndex: 10000,
-          animation: 'slideIn 0.3s ease',
-          minWidth: '300px',
-          maxWidth: '500px'
+          animation: 'slideInBounce 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55)',
+          backdropFilter: 'blur(10px)',
+          overflow: 'hidden'
         }}>
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '12px',
-            color: '#fff',
-            fontSize: '15px',
-            fontWeight: '500'
+            gap: '16px',
+            position: 'relative'
           }}>
-            {toast.message}
+            {/* Icon */}
+            <div style={{
+              fontSize: '32px',
+              lineHeight: 1,
+              animation: 'popIn 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55) 0.2s both'
+            }}>
+              {toast.message.split(' ')[0]}
+            </div>
+            
+            {/* Message */}
+            <div style={{
+              flex: 1,
+              color: '#fff',
+              fontSize: '15px',
+              fontWeight: '600',
+              letterSpacing: '0.3px',
+              lineHeight: '1.5'
+            }}>
+              {toast.message.split(' ').slice(1).join(' ')}
+            </div>
+            
+            {/* Close button */}
+            <button
+              onClick={() => setToast(null)}
+              style={{
+                background: 'rgba(255, 255, 255, 0.1)',
+                border: 'none',
+                borderRadius: '8px',
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                color: '#fff',
+                fontSize: '18px',
+                fontWeight: 'bold'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+                e.currentTarget.style.transform = 'rotate(90deg)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                e.currentTarget.style.transform = 'rotate(0deg)';
+              }}
+            >
+              ×
+            </button>
+          </div>
+          
+          {/* Progress bar */}
+          <div style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            height: '2px',
+            background: toast.type === 'success' ? '#10b981' : '#ef4444',
+            animation: 'shrink 3s linear',
+            transformOrigin: 'left'
+          }} />
+        </div>
+      )}
+
+      {/* Confirmation Dialog */}
+      {confirmDialog && (
+        <div 
+          className="modal-overlay" 
+          onClick={confirmDialog.onCancel}
+          style={{ zIndex: 10001 }}
+        >
+          <div 
+            className="modal-content" 
+            onClick={e => e.stopPropagation()}
+            style={{ 
+              maxWidth: '380px',
+              textAlign: 'center',
+              padding: '28px'
+            }}
+          >
+            <h2 style={{ 
+              marginBottom: '16px', 
+              fontSize: '24px', 
+              fontWeight: '700'
+            }}>
+              {confirmDialog.title}
+            </h2>
+            
+            <p style={{ 
+              marginBottom: '32px', 
+              fontSize: '15px', 
+              opacity: 0.8,
+              lineHeight: '1.6'
+            }}>
+              {confirmDialog.message}
+            </p>
+            
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                type="button"
+                onClick={confirmDialog.onCancel}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: '1px solid #2a2a2a',
+                  background: 'transparent',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: '15px',
+                  fontWeight: '600'
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDialog.onConfirm}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: '#ef4444',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: '15px',
+                  fontWeight: '600'
+                }}
+              >
+                Eliminar
+              </button>
+            </div>
           </div>
         </div>
       )}
