@@ -13,43 +13,74 @@ const ExpenseTracker = ({ session }) => {
   const [modalType, setModalType] = useState('');
   const [timeRange, setTimeRange] = useState('3m'); // 3m, 6m, 1y
 
+  // TEMPORALMENTE DESHABILITADO PARA DEBUG
   // Cargar datos desde Supabase
   useEffect(() => {
+    console.log('✅ ExpenseTracker montado. User ID:', session?.user?.id);
+    console.log('✅ User email:', session?.user?.email);
+    
+    // Dejar arrays vacíos por ahora para verificar que la sesión funciona
+    setLoading(false);
+    
+    /* DESCOMENTAR ESTO DESPUÉS DE VERIFICAR QUE LA SESIÓN FUNCIONA
     const loadData = async () => {
       try {
         setLoading(true);
         
         // Cargar cuentas
-        const { data: accountsData } = await supabase
+        const { data: accountsData, error: accountsError } = await supabase
           .from('accounts')
           .select('*')
           .eq('user_id', session.user.id);
         
+        if (accountsError) {
+          console.error('❌ Error loading accounts:', accountsError);
+        } else {
+          console.log('✅ Accounts loaded:', accountsData);
+        }
+        
         // Cargar transacciones
-        const { data: transactionsData } = await supabase
+        const { data: transactionsData, error: transactionsError } = await supabase
           .from('transactions')
           .select('*')
           .eq('user_id', session.user.id)
           .order('date', { ascending: false });
         
+        if (transactionsError) {
+          console.error('❌ Error loading transactions:', transactionsError);
+        } else {
+          console.log('✅ Transactions loaded:', transactionsData);
+        }
+        
         // Cargar cuotas
-        const { data: installmentsData } = await supabase
+        const { data: installmentsData, error: installmentsError } = await supabase
           .from('installments')
           .select('*')
           .eq('user_id', session.user.id);
+        
+        if (installmentsError) {
+          console.error('❌ Error loading installments:', installmentsError);
+        } else {
+          console.log('✅ Installments loaded:', installmentsData);
+        }
         
         setAccounts(accountsData || []);
         setTransactions(transactionsData || []);
         setInstallments(installmentsData || []);
       } catch (error) {
-        console.error('Error loading data:', error);
+        console.error('❌ Fatal error loading data:', error);
+        // Mostrar app vacía en lugar de crashear
+        setAccounts([]);
+        setTransactions([]);
+        setInstallments([]);
       } finally {
         setLoading(false);
       }
     };
 
     loadData();
-  }, [session.user.id]);
+    */
+  }, [session]);
 
   const totalBalance = accounts.reduce((sum, acc) => sum + acc.balance, 0);
   
@@ -531,7 +562,7 @@ const ExpenseTracker = ({ session }) => {
         zIndex: 100
       }}>
         <div style={{ maxWidth: '1400px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>💰 Plata en Orden</h1>
+          <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>💰 Mi Plata en Orden</h1>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {session?.user?.email && (

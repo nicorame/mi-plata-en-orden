@@ -1,7 +1,7 @@
 {
-  "name": "plata-en-orden",
+  "name": "mi-plata-en-orden",
   "version": "1.0.0",
-  "description": "Aplicación de gestión de finanzas personales - Plata en Orden",
+  "description": "Aplicación de gestión de finanzas personales - Mi Plata en Orden",
   "private": true,
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
