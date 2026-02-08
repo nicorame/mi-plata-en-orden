@@ -73,6 +73,7 @@ const ExpenseTracker = ({ session }) => {
     };
 
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.user.id]);
 
   const totalBalance = accounts.reduce((sum, acc) => sum + acc.balance, 0);
