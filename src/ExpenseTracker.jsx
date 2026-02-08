@@ -12,6 +12,15 @@ const ExpenseTracker = ({ session }) => {
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
   const [timeRange, setTimeRange] = useState('3m'); // 3m, 6m, 1y
+  const [editingTransaction, setEditingTransaction] = useState(null);
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  // Función para mostrar notificaciones
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   // Cargar datos desde Supabase
   useEffect(() => {
@@ -161,6 +170,79 @@ const ExpenseTracker = ({ session }) => {
     }
   };
 
+  const deleteTransaction = async (transactionId) => {
+    if (!window.confirm('¿Estás seguro de que quieres eliminar esta transacción?')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('id', transactionId);
+
+      if (error) throw error;
+
+      // Actualizar estado local
+      setTransactions(transactions.filter(t => t.id !== transactionId));
+      
+      // Recargar cuentas para actualizar balances
+      const { data: accountsData } = await supabase
+        .from('accounts')
+        .select('*')
+        .eq('user_id', session.user.id);
+      
+      setAccounts(accountsData || []);
+      showToast('🗑️ Transacción eliminada correctamente', 'success');
+    } catch (error) {
+      console.error('Error al eliminar transacción:', error);
+      showToast('❌ Error al eliminar la transacción', 'error');
+    }
+  };
+
+  const editTransaction = (transaction) => {
+    setEditingTransaction(transaction);
+    setModalType('transaction');
+    setShowModal(true);
+  };
+
+  const deleteAccount = async (accountId) => {
+    if (!window.confirm('¿Estás seguro de que quieres eliminar esta cuenta? Se eliminarán todas las transacciones asociadas.')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('accounts')
+        .delete()
+        .eq('id', accountId);
+
+      if (error) throw error;
+
+      // Actualizar estado local
+      setAccounts(accounts.filter(a => a.id !== accountId));
+      
+      // Recargar transacciones (las asociadas se habrán eliminado por CASCADE)
+      const { data: transactionsData } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('date', { ascending: false });
+      
+      setTransactions(transactionsData || []);
+      showToast('🗑️ Cuenta eliminada correctamente', 'success');
+    } catch (error) {
+      console.error('Error al eliminar cuenta:', error);
+      showToast('❌ Error al eliminar la cuenta', 'error');
+    }
+  };
+
+  const editAccount = (account) => {
+    setEditingAccount(account);
+    setModalType('account');
+    setShowModal(true);
+  };
+
   const Modal = ({ children, onClose }) => (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -170,53 +252,102 @@ const ExpenseTracker = ({ session }) => {
   );
 
   const AddTransactionModal = () => {
-    const [formData, setFormData] = useState({
-      type: 'expense',
-      amount: '',
-      description: '',
-      accountId: accounts[0]?.id || 1,
-      category: '',
-      date: new Date().toISOString().split('T')[0]
-    });
+    const [formData, setFormData] = useState(
+      editingTransaction ? {
+        type: editingTransaction.type,
+        amount: editingTransaction.amount.toString(),
+        description: editingTransaction.description,
+        accountId: editingTransaction.account_id,
+        category: editingTransaction.category,
+        date: editingTransaction.date
+      } : {
+        type: 'expense',
+        amount: '',
+        description: '',
+        accountId: accounts[0]?.id || '',
+        category: '',
+        date: new Date().toISOString().split('T')[0]
+      }
+    );
 
     const handleSubmit = async (e) => {
       e.preventDefault();
       try {
-        const { data, error } = await supabase
-          .from('transactions')
-          .insert([{
-            user_id: session.user.id,
-            account_id: formData.accountId,
-            type: formData.type,
-            amount: parseFloat(formData.amount),
-            description: formData.description,
-            category: formData.category,
-            date: formData.date
-          }])
-          .select();
+        if (editingTransaction) {
+          // Editar transacción existente
+          const { data, error } = await supabase
+            .from('transactions')
+            .update({
+              type: formData.type,
+              amount: parseFloat(formData.amount),
+              description: formData.description,
+              category: formData.category,
+              date: formData.date,
+              account_id: formData.accountId
+            })
+            .eq('id', editingTransaction.id)
+            .select();
 
-        if (error) throw error;
-        
-        setTransactions([data[0], ...transactions]);
-        
-        // Actualizar balance de cuenta localmente
-        setAccounts(accounts.map(acc => 
-          acc.id === formData.accountId 
-            ? { ...acc, balance: acc.balance + (formData.type === 'income' ? parseFloat(formData.amount) : -parseFloat(formData.amount)) }
-            : acc
-        ));
+          if (error) throw error;
+          
+          // Actualizar estado local
+          setTransactions(transactions.map(t => 
+            t.id === editingTransaction.id ? data[0] : t
+          ));
+          
+          // Recargar cuentas para actualizar balances
+          const { data: accountsData } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('user_id', session.user.id);
+          
+          setAccounts(accountsData || []);
+        } else {
+          // Crear nueva transacción
+          const { data, error } = await supabase
+            .from('transactions')
+            .insert([{
+              user_id: session.user.id,
+              account_id: formData.accountId,
+              type: formData.type,
+              amount: parseFloat(formData.amount),
+              description: formData.description,
+              category: formData.category,
+              date: formData.date
+            }])
+            .select();
+
+          if (error) throw error;
+          
+          setTransactions([data[0], ...transactions]);
+          
+          // Recargar cuentas para actualizar balances
+          const { data: accountsData } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('user_id', session.user.id);
+          
+          setAccounts(accountsData || []);
+        }
         
         setShowModal(false);
+        setEditingTransaction(null);
+        showToast(editingTransaction ? '✅ Transacción actualizada' : '✅ Transacción creada', 'success');
       } catch (error) {
-        console.error('Error adding transaction:', error);
-        alert('Error al agregar transacción');
+        console.error('Error saving transaction:', error);
+        showToast('❌ Error al guardar la transacción', 'error');
       }
     };
 
+    const handleClose = () => {
+      setShowModal(false);
+      setEditingTransaction(null);
+    };
+
     return (
-      <Modal onClose={() => setShowModal(false)}>
+      <Modal onClose={handleClose}>
         <h2 style={{ marginBottom: '24px', fontSize: '24px', fontWeight: '700' }}>
-          {formData.type === 'expense' ? 'Nuevo Gasto' : 'Nuevo Ingreso'}
+          {editingTransaction ? '✏️ Editar Transacción' : (formData.type === 'expense' ? '💸 Nuevo Gasto' : '💰 Nuevo Ingreso')}
         </h2>
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '20px' }}>
@@ -333,38 +464,75 @@ const ExpenseTracker = ({ session }) => {
   };
 
   const AddAccountModal = () => {
-    const [formData, setFormData] = useState({
-      name: '',
-      balance: '',
-      color: '#6366f1'
-    });
+    const [formData, setFormData] = useState(
+      editingAccount ? {
+        name: editingAccount.name,
+        balance: editingAccount.balance.toString(),
+        color: editingAccount.color
+      } : {
+        name: '',
+        balance: '',
+        color: '#6366f1'
+      }
+    );
 
     const handleSubmit = async (e) => {
       e.preventDefault();
       try {
-        const { data, error } = await supabase
-          .from('accounts')
-          .insert([{
-            user_id: session.user.id,
-            name: formData.name,
-            balance: parseFloat(formData.balance),
-            color: formData.color
-          }])
-          .select();
+        if (editingAccount) {
+          // Editar cuenta existente
+          const { data, error } = await supabase
+            .from('accounts')
+            .update({
+              name: formData.name,
+              balance: parseFloat(formData.balance),
+              color: formData.color
+            })
+            .eq('id', editingAccount.id)
+            .select();
 
-        if (error) throw error;
+          if (error) throw error;
+          
+          setAccounts(accounts.map(a => 
+            a.id === editingAccount.id ? data[0] : a
+          ));
+          showToast('✅ Cuenta actualizada correctamente', 'success');
+        } else {
+          // Crear nueva cuenta
+          const { data, error } = await supabase
+            .from('accounts')
+            .insert([{
+              user_id: session.user.id,
+              name: formData.name,
+              balance: parseFloat(formData.balance),
+              color: formData.color
+            }])
+            .select();
+
+          if (error) throw error;
+          
+          setAccounts([...accounts, data[0]]);
+          showToast('✅ Cuenta creada correctamente', 'success');
+        }
         
-        setAccounts([...accounts, data[0]]);
         setShowModal(false);
+        setEditingAccount(null);
       } catch (error) {
-        console.error('Error adding account:', error);
-        alert('Error al crear cuenta');
+        console.error('Error saving account:', error);
+        showToast('❌ Error al guardar cuenta', 'error');
       }
     };
 
+    const handleClose = () => {
+      setShowModal(false);
+      setEditingAccount(null);
+    };
+
     return (
-      <Modal onClose={() => setShowModal(false)}>
-        <h2 style={{ marginBottom: '24px', fontSize: '24px', fontWeight: '700' }}>Nueva Cuenta</h2>
+      <Modal onClose={handleClose}>
+        <h2 style={{ marginBottom: '24px', fontSize: '24px', fontWeight: '700' }}>
+          {editingAccount ? '✏️ Editar Cuenta' : '💳 Nueva Cuenta'}
+        </h2>
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Nombre</label>
@@ -433,15 +601,16 @@ const ExpenseTracker = ({ session }) => {
         
         setInstallments([...installments, data[0]]);
         setShowModal(false);
+        showToast('✅ Compra en cuotas creada', 'success');
       } catch (error) {
         console.error('Error adding installment:', error);
-        alert('Error al crear cuota');
+        showToast('❌ Error al crear cuota', 'error');
       }
     };
 
     return (
       <Modal onClose={() => setShowModal(false)}>
-        <h2 style={{ marginBottom: '24px', fontSize: '24px', fontWeight: '700' }}>Nueva Compra en Cuotas</h2>
+        <h2 style={{ marginBottom: '24px', fontSize: '24px', fontWeight: '700' }}>🛒 Nueva Compra en Cuotas</h2>
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Nombre</label>
@@ -650,7 +819,7 @@ const ExpenseTracker = ({ session }) => {
         {/* Cuentas */}
         <div style={{ marginBottom: '32px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h2 style={{ fontSize: '20px', fontWeight: '600' }}>Cuentas</h2>
+            <h2 style={{ fontSize: '20px', fontWeight: '600' }}>💳 Cuentas</h2>
             <button
               onClick={() => openModal('account')}
               style={{
@@ -676,11 +845,51 @@ const ExpenseTracker = ({ session }) => {
                   border: '1px solid #2a2a2a',
                   padding: '20px',
                   borderRadius: '12px',
-                  borderLeft: `4px solid ${account.color}`
+                  borderLeft: `4px solid ${account.color}`,
+                  position: 'relative'
                 }}
               >
                 <div style={{ fontSize: '14px', opacity: 0.6, marginBottom: '8px' }}>{account.name}</div>
-                <div style={{ fontSize: '24px', fontWeight: '700' }}>{formatCurrency(account.balance)}</div>
+                <div style={{ fontSize: '24px', fontWeight: '700', marginBottom: '12px' }}>{formatCurrency(account.balance)}</div>
+                
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                  <button
+                    onClick={() => editAccount(account)}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #2a2a2a',
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                      transition: 'all 0.2s',
+                      flex: 1
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = '#10b98110'}
+                    onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                    title="Editar"
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    onClick={() => deleteAccount(account.id)}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #2a2a2a',
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                      transition: 'all 0.2s',
+                      flex: 1
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = '#ef444410'}
+                    onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                    title="Eliminar"
+                  >
+                    🗑️
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -689,7 +898,7 @@ const ExpenseTracker = ({ session }) => {
         {/* Gráficos Section */}
         <div style={{ marginBottom: '32px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-            <h2 style={{ fontSize: '20px', fontWeight: '600' }}>Evolución de tus finanzas</h2>
+            <h2 style={{ fontSize: '20px', fontWeight: '600' }}>📊 Evolución de tus finanzas</h2>
             <div style={{ display: 'flex', gap: '8px', background: '#1f1f1f', padding: '4px', borderRadius: '8px', border: '1px solid #2a2a2a' }}>
               {['3m', '6m', '1y'].map(range => (
                 <button
@@ -797,7 +1006,7 @@ const ExpenseTracker = ({ session }) => {
             border: '1px solid #2a2a2a'
           }}>
             <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px' }}>
-              Ranking de Categorías
+              🏆 Ranking de Categorías
             </h3>
             
             {categoryData.length > 0 ? (
@@ -838,20 +1047,21 @@ const ExpenseTracker = ({ session }) => {
 
         {/* Transacciones Recientes */}
         <div style={{ marginBottom: '32px' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: '600', marginBottom: '16px' }}>Transacciones Recientes</h2>
+          <h2 style={{ fontSize: '20px', fontWeight: '600', marginBottom: '16px' }}>📝 Transacciones Recientes</h2>
           <div style={{ background: '#1f1f1f', borderRadius: '12px', overflow: 'hidden', border: '1px solid #2a2a2a' }}>
-            {transactions.slice(0, 5).map((transaction, index) => (
+            {transactions.slice(0, 10).map((transaction, index) => (
               <div
                 key={transaction.id}
                 style={{
                   padding: '16px 20px',
-                  borderBottom: index < 4 ? '1px solid #2a2a2a' : 'none',
+                  borderBottom: index < 9 ? '1px solid #2a2a2a' : 'none',
                   display: 'flex',
                   justifyContent: 'space-between',
-                  alignItems: 'center'
+                  alignItems: 'center',
+                  gap: '12px'
                 }}
               >
-                <div>
+                <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: '500', marginBottom: '4px' }}>{transaction.description}</div>
                   <div style={{ fontSize: '12px', opacity: 0.5 }}>{transaction.category} • {transaction.date}</div>
                 </div>
@@ -862,6 +1072,42 @@ const ExpenseTracker = ({ session }) => {
                 }}>
                   {transaction.type === 'income' ? '+' : '-'}{formatCurrency(transaction.amount)}
                 </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={() => editTransaction(transaction)}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #2a2a2a',
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = '#10b98110'}
+                    onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                    title="Editar"
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    onClick={() => deleteTransaction(transaction.id)}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #2a2a2a',
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = '#ef444410'}
+                    onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                    title="Eliminar"
+                  >
+                    🗑️
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -870,7 +1116,7 @@ const ExpenseTracker = ({ session }) => {
         {/* Compras en Cuotas */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h2 style={{ fontSize: '20px', fontWeight: '600' }}>Compras en Cuotas</h2>
+            <h2 style={{ fontSize: '20px', fontWeight: '600' }}>🛒 Compras en Cuotas</h2>
             <button
               onClick={() => openModal('installment')}
               style={{
@@ -1010,7 +1256,59 @@ const ExpenseTracker = ({ session }) => {
             padding: 24px;
           }
         }
+        
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        
+        @keyframes slideOut {
+          from {
+            transform: translateX(0);
+            opacity: 1;
+          }
+          to {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+        }
       `}</style>
+      
+      {/* Toast Notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          top: '24px',
+          right: '24px',
+          background: toast.type === 'success' ? '#1f1f1f' : '#1f1f1f',
+          border: `1px solid ${toast.type === 'success' ? '#10b981' : '#ef4444'}`,
+          borderLeft: `4px solid ${toast.type === 'success' ? '#10b981' : '#ef4444'}`,
+          padding: '16px 20px',
+          borderRadius: '12px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          zIndex: 10000,
+          animation: 'slideIn 0.3s ease',
+          minWidth: '300px',
+          maxWidth: '500px'
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            color: '#fff',
+            fontSize: '15px',
+            fontWeight: '500'
+          }}>
+            {toast.message}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
