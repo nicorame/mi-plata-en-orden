@@ -29,9 +29,6 @@ const ExpenseTracker = ({ session }) => {
 
   // Cargar datos desde Supabase
   useEffect(() => {
-    console.log('✅ ExpenseTracker montado. User ID:', session?.user?.id);
-    console.log('✅ User email:', session?.user?.email);
-    
     const loadData = async () => {
       try {
         setLoading(true);
@@ -43,9 +40,7 @@ const ExpenseTracker = ({ session }) => {
           .eq('user_id', session.user.id);
         
         if (accountsError) {
-          console.error('❌ Error loading accounts:', accountsError);
-        } else {
-          console.log('✅ Accounts loaded:', accountsData);
+          console.error('Error loading accounts:', accountsError);
         }
         
         // Cargar transacciones
@@ -56,9 +51,7 @@ const ExpenseTracker = ({ session }) => {
           .order('date', { ascending: false });
         
         if (transactionsError) {
-          console.error('❌ Error loading transactions:', transactionsError);
-        } else {
-          console.log('✅ Transactions loaded:', transactionsData);
+          console.error('Error loading transactions:', transactionsError);
         }
         
         // Cargar cuotas
@@ -68,16 +61,14 @@ const ExpenseTracker = ({ session }) => {
           .eq('user_id', session.user.id);
         
         if (installmentsError) {
-          console.error('❌ Error loading installments:', installmentsError);
-        } else {
-          console.log('✅ Installments loaded:', installmentsData);
+          console.error('Error loading installments:', installmentsError);
         }
         
         setAccounts(accountsData || []);
         setTransactions(transactionsData || []);
         setInstallments(installmentsData || []);
       } catch (error) {
-        console.error('❌ Fatal error loading data:', error);
+        console.error('Fatal error loading data:', error);
         setAccounts([]);
         setTransactions([]);
         setInstallments([]);
@@ -329,23 +320,30 @@ const ExpenseTracker = ({ session }) => {
   );
 
   const AddTransactionModal = () => {
-    const [formData, setFormData] = useState(
-      editingTransaction ? {
-        type: editingTransaction.type,
-        amount: editingTransaction.amount.toString(),
-        description: editingTransaction.description,
-        accountId: editingTransaction.account_id,
-        category: editingTransaction.category,
-        date: editingTransaction.date
-      } : {
+    const [formData, setFormData] = useState(() => {
+      if (editingTransaction) {
+        return {
+          type: editingTransaction.type,
+          amount: editingTransaction.amount.toString(),
+          description: editingTransaction.description,
+          accountId: editingTransaction.account_id,
+          category: editingTransaction.category,
+          date: editingTransaction.date
+        };
+      }
+      
+      // Para nueva transacción, obtener la primera cuenta disponible
+      const defaultAccountId = accounts.length > 0 ? accounts[0].id : '';
+      
+      return {
         type: 'expense',
         amount: '',
         description: '',
-        accountId: accounts[0]?.id || '',
+        accountId: defaultAccountId,
         category: '',
         date: new Date().toISOString().split('T')[0]
-      }
-    );
+      };
+    });
 
     const handleSubmit = async (e) => {
       e.preventDefault();
@@ -498,15 +496,33 @@ const ExpenseTracker = ({ session }) => {
           
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Cuenta</label>
-            <select
-              value={formData.accountId}
-              onChange={(e) => setFormData({...formData, accountId: parseInt(e.target.value)})}
-              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
-            >
-              {accounts.map(acc => (
-                <option key={acc.id} value={acc.id}>{acc.name}</option>
-              ))}
-            </select>
+            {accounts.length === 0 ? (
+              <div style={{ 
+                padding: '12px', 
+                background: 'rgba(239, 68, 68, 0.1)', 
+                border: '1px solid #ef4444', 
+                borderRadius: '8px',
+                color: '#ef4444',
+                fontSize: '14px'
+              }}>
+                ⚠️ Primero debes crear una cuenta
+              </div>
+            ) : (
+              <select
+                value={formData.accountId}
+                onChange={(e) => {
+                  setFormData({...formData, accountId: e.target.value});
+                }}
+                style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+                required
+              >
+                {accounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           
           <div style={{ marginBottom: '20px' }}>
@@ -530,7 +546,18 @@ const ExpenseTracker = ({ session }) => {
             </button>
             <button
               type="submit"
-              style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: formData.type === 'income' ? '#10b981' : '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}
+              disabled={accounts.length === 0}
+              style={{ 
+                flex: 1, 
+                padding: '12px', 
+                borderRadius: '8px', 
+                border: 'none', 
+                background: accounts.length === 0 ? '#2a2a2a' : (formData.type === 'income' ? '#10b981' : '#ef4444'), 
+                color: accounts.length === 0 ? '#666' : '#fff', 
+                cursor: accounts.length === 0 ? 'not-allowed' : 'pointer', 
+                fontWeight: '600',
+                opacity: accounts.length === 0 ? 0.5 : 1
+              }}
             >
               Guardar
             </button>
