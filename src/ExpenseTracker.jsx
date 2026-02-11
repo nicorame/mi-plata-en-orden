@@ -929,7 +929,9 @@ const ExpenseTracker = ({ session }) => {
       background: '#191919',
       color: '#fff',
       fontFamily: "'Roboto', -apple-system, BlinkMacSystemFont, sans-serif",
-      padding: '0'
+      padding: '0',
+      overflow: 'hidden',
+      width: '100%'
     }}>
       {/* Header */}
       <header style={{
@@ -1070,9 +1072,9 @@ const ExpenseTracker = ({ session }) => {
         </div>
       </header>
 
-      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '24px' }}>
+      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '16px', overflow: 'hidden' }}>
         {/* Balance Cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', marginBottom: '32px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))', gap: '16px', marginBottom: '32px' }}>
           <div style={{
             background: '#1f1f1f',
             padding: '24px',
@@ -1199,7 +1201,7 @@ const ExpenseTracker = ({ session }) => {
             
             {/* Time Range Selector */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', gap: '8px', background: '#1f1f1f', padding: '4px', borderRadius: '8px', border: '1px solid #2a2a2a' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', background: '#1f1f1f', padding: '4px', borderRadius: '8px', border: '1px solid #2a2a2a' }}>
                 {['3m', '6m', '1y', 'custom'].map(range => (
                   <button
                     key={range}
@@ -1207,15 +1209,16 @@ const ExpenseTracker = ({ session }) => {
                     style={{
                       background: timeRange === range ? '#10b981' : 'transparent',
                       border: 'none',
-                      padding: '8px 16px',
+                      padding: '8px 12px',
                       borderRadius: '6px',
                       color: '#fff',
                       cursor: 'pointer',
-                      fontSize: '14px',
-                      fontWeight: timeRange === range ? '600' : '400'
+                      fontSize: '13px',
+                      fontWeight: timeRange === range ? '600' : '400',
+                      whiteSpace: 'nowrap'
                     }}
                   >
-                    {range === '3m' ? '3 meses' : range === '6m' ? '6 meses' : range === '1y' ? '1 año' : '📅 Mes específico'}
+                    {range === '3m' ? '3m' : range === '6m' ? '6m' : range === '1y' ? '1y' : '📅 Mes'}
                   </button>
                 ))}
               </div>
@@ -1293,28 +1296,39 @@ const ExpenseTracker = ({ session }) => {
           <div style={{ 
             background: '#1f1f1f', 
             borderRadius: '12px', 
-            padding: '24px',
+            padding: '20px',
             border: '1px solid #2a2a2a',
             marginBottom: '20px'
           }}>
             <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '4px', opacity: 0.9 }}>
               Resumen unificado en Pesos (ARS)
             </h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px', marginTop: '20px', marginBottom: '30px' }}>
-              <div>
-                <div style={{ fontSize: '14px', opacity: 0.6, marginBottom: '8px' }}>Ingresos</div>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: '#10b981' }}>{formatCurrency(totalIncome)}</div>
+            <div className="summary-grid" style={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(3, 1fr)', 
+              gap: '20px', 
+              marginTop: '20px', 
+              marginBottom: '30px' 
+            }}>
+              <div className="summary-item">
+                <div style={{ fontSize: '13px', opacity: 0.6, marginBottom: '8px' }}>Ingresos</div>
+                <div style={{ fontSize: '24px', fontWeight: '700', color: '#10b981', wordBreak: 'break-word' }}>
+                  {formatCurrency(totalIncome)}
+                </div>
               </div>
-              <div>
-                <div style={{ fontSize: '14px', opacity: 0.6, marginBottom: '8px' }}>Gastos</div>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: '#ef4444' }}>{formatCurrency(totalExpense)}</div>
+              <div className="summary-item">
+                <div style={{ fontSize: '13px', opacity: 0.6, marginBottom: '8px' }}>Gastos</div>
+                <div style={{ fontSize: '24px', fontWeight: '700', color: '#ef4444', wordBreak: 'break-word' }}>
+                  {formatCurrency(totalExpense)}
+                </div>
               </div>
-              <div>
-                <div style={{ fontSize: '14px', opacity: 0.6, marginBottom: '8px' }}>Balance</div>
+              <div className="summary-item">
+                <div style={{ fontSize: '13px', opacity: 0.6, marginBottom: '8px' }}>Balance</div>
                 <div style={{ 
-                  fontSize: '28px', 
+                  fontSize: '24px', 
                   fontWeight: '700', 
-                  color: totalIncome - totalExpense >= 0 ? '#10b981' : '#ef4444' 
+                  color: totalIncome - totalExpense >= 0 ? '#10b981' : '#ef4444',
+                  wordBreak: 'break-word' 
                 }}>
                   {formatCurrency(totalIncome - totalExpense)}
                 </div>
@@ -1737,6 +1751,33 @@ const ExpenseTracker = ({ session }) => {
           to {
             transform: translateX(100%);
             opacity: 0;
+          }
+        }
+        
+        * {
+          box-sizing: border-box;
+        }
+        
+        body {
+          overflow-x: hidden;
+        }
+        
+        @media (max-width: 768px) {
+          h1, h2, h3 {
+            font-size: clamp(16px, 4vw, 24px) !important;
+          }
+          
+          .modal-content {
+            width: 95% !important;
+            max-width: 95% !important;
+          }
+          
+          .summary-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+          }
+          
+          .summary-item:nth-child(3) {
+            grid-column: 1 / -1;
           }
         }
       `}</style>
