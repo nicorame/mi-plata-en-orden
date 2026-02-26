@@ -7,6 +7,8 @@ const ExpenseTracker = ({ session }) => {
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [installments, setInstallments] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [pendingPayments, setPendingPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   
   const [showModal, setShowModal] = useState(false);
@@ -17,6 +19,8 @@ const ExpenseTracker = ({ session }) => {
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [editingAccount, setEditingAccount] = useState(null);
   const [editingInstallment, setEditingInstallment] = useState(null);
+  const [editingSubscription, setEditingSubscription] = useState(null);
+  const [editingPendingPayment, setEditingPendingPayment] = useState(null);
   const [toast, setToast] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -64,14 +68,41 @@ const ExpenseTracker = ({ session }) => {
           console.error('Error loading installments:', installmentsError);
         }
         
+        // Cargar suscripciones
+        const { data: subscriptionsData, error: subscriptionsError } = await supabase
+          .from('subscriptions')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('next_billing_date', { ascending: true });
+        
+        if (subscriptionsError) {
+          console.error('Error loading subscriptions:', subscriptionsError);
+        }
+        
+        // Cargar pagos pendientes
+        const { data: pendingPaymentsData, error: pendingPaymentsError } = await supabase
+          .from('pending_payments')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .eq('is_paid', false)
+          .order('due_date', { ascending: true });
+        
+        if (pendingPaymentsError) {
+          console.error('Error loading pending payments:', pendingPaymentsError);
+        }
+        
         setAccounts(accountsData || []);
         setTransactions(transactionsData || []);
         setInstallments(installmentsData || []);
+        setSubscriptions(subscriptionsData || []);
+        setPendingPayments(pendingPaymentsData || []);
       } catch (error) {
         console.error('Fatal error loading data:', error);
         setAccounts([]);
         setTransactions([]);
         setInstallments([]);
+        setSubscriptions([]);
+        setPendingPayments([]);
       } finally {
         setLoading(false);
       }
@@ -308,6 +339,125 @@ const ExpenseTracker = ({ session }) => {
   const editInstallment = (installment) => {
     setEditingInstallment(installment);
     setModalType('installment');
+    setShowModal(true);
+  };
+
+  // Subscription functions
+  const deleteSubscription = async (subscriptionId) => {
+    setConfirmDialog({
+      title: '🗑️ Eliminar suscripción',
+      message: '¿Estás seguro de que quieres eliminar esta suscripción?',
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase
+            .from('subscriptions')
+            .delete()
+            .eq('id', subscriptionId);
+
+          if (error) throw error;
+
+          setSubscriptions(subscriptions.filter(s => s.id !== subscriptionId));
+          showToast('🗑️ Suscripción eliminada correctamente', 'success');
+        } catch (error) {
+          console.error('Error al eliminar suscripción:', error);
+          showToast('❌ Error al eliminar la suscripción', 'error');
+        }
+        setConfirmDialog(null);
+      },
+      onCancel: () => setConfirmDialog(null)
+    });
+  };
+
+  const editSubscription = (subscription) => {
+    setEditingSubscription(subscription);
+    setModalType('subscription');
+    setShowModal(true);
+  };
+
+  // Pending Payment functions
+  const deletePendingPayment = async (paymentId) => {
+    setConfirmDialog({
+      title: '🗑️ Eliminar pago pendiente',
+      message: '¿Estás seguro de que quieres eliminar este pago pendiente?',
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase
+            .from('pending_payments')
+            .delete()
+            .eq('id', paymentId);
+
+          if (error) throw error;
+
+          setPendingPayments(pendingPayments.filter(p => p.id !== paymentId));
+          showToast('🗑️ Pago pendiente eliminado', 'success');
+        } catch (error) {
+          console.error('Error al eliminar pago:', error);
+          showToast('❌ Error al eliminar el pago', 'error');
+        }
+        setConfirmDialog(null);
+      },
+      onCancel: () => setConfirmDialog(null)
+    });
+  };
+
+  const markAsPaid = async (payment) => {
+    try {
+      // Marcar como pagado
+      const { error: updateError } = await supabase
+        .from('pending_payments')
+        .update({ is_paid: true, paid_date: new Date().toISOString() })
+        .eq('id', payment.id);
+
+      if (updateError) throw updateError;
+
+      // Crear transacción
+      const { error: transactionError } = await supabase
+        .from('transactions')
+        .insert([{
+          user_id: session.user.id,
+          account_id: payment.account_id,
+          type: 'expense',
+          amount: payment.amount,
+          description: payment.description,
+          category: payment.category,
+          date: new Date().toISOString().split('T')[0]
+        }]);
+
+      if (transactionError) throw transactionError;
+
+      // Recargar datos
+      const { data: paymentsData } = await supabase
+        .from('pending_payments')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .eq('is_paid', false)
+        .order('due_date', { ascending: true });
+
+      const { data: transactionsData } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('date', { ascending: false });
+
+      const { data: accountsData } = await supabase
+        .from('accounts')
+        .select('*')
+        .eq('user_id', session.user.id);
+
+      setPendingPayments(paymentsData || []);
+      setTransactions(transactionsData || []);
+      setAccounts(accountsData || []);
+      
+      showToast('✅ Pago registrado correctamente', 'success');
+    } catch (error) {
+      console.error('Error al marcar como pagado:', error);
+      showToast('❌ Error al registrar el pago', 'error');
+    }
+  };
+
+  const editPendingPayment = (payment) => {
+    setEditingPendingPayment(payment);
+    setModalType('pending_payment');
     setShowModal(true);
   };
 
@@ -870,6 +1020,338 @@ const ExpenseTracker = ({ session }) => {
                 +
               </button>
             </div>
+          </div>
+          
+          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+            <button type="button" onClick={() => setShowModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: 'transparent', color: '#fff', cursor: 'pointer' }}>
+              Cancelar
+            </button>
+            <button type="submit" style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#10b981', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>
+              Guardar
+            </button>
+          </div>
+        </form>
+      </Modal>
+    );
+  };
+
+  const AddSubscriptionModal = () => {
+    const [formData, setFormData] = useState(() => {
+      if (editingSubscription) {
+        return {
+          name: editingSubscription.name,
+          amount: editingSubscription.amount.toString(),
+          billing_cycle: editingSubscription.billing_cycle,
+          next_billing_date: editingSubscription.next_billing_date,
+          category: editingSubscription.category,
+          account_id: editingSubscription.account_id
+        };
+      }
+      
+      return {
+        name: '',
+        amount: '',
+        billing_cycle: 'monthly',
+        next_billing_date: new Date().toISOString().split('T')[0],
+        category: '',
+        account_id: accounts.length > 0 ? accounts[0].id : ''
+      };
+    });
+
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      try {
+        if (editingSubscription) {
+          const { data, error } = await supabase
+            .from('subscriptions')
+            .update({
+              name: formData.name,
+              amount: parseFloat(formData.amount),
+              billing_cycle: formData.billing_cycle,
+              next_billing_date: formData.next_billing_date,
+              category: formData.category,
+              account_id: formData.account_id
+            })
+            .eq('id', editingSubscription.id)
+            .select();
+
+          if (error) throw error;
+          
+          setSubscriptions(subscriptions.map(s => 
+            s.id === editingSubscription.id ? data[0] : s
+          ));
+          showToast('✅ Suscripción actualizada', 'success');
+        } else {
+          const { data, error } = await supabase
+            .from('subscriptions')
+            .insert([{
+              user_id: session.user.id,
+              name: formData.name,
+              amount: parseFloat(formData.amount),
+              billing_cycle: formData.billing_cycle,
+              next_billing_date: formData.next_billing_date,
+              category: formData.category,
+              account_id: formData.account_id,
+              is_active: true
+            }])
+            .select();
+
+          if (error) throw error;
+          
+          setSubscriptions([...subscriptions, data[0]]);
+          showToast('✅ Suscripción creada', 'success');
+        }
+        
+        setShowModal(false);
+        setEditingSubscription(null);
+      } catch (error) {
+        console.error('Error:', error);
+        showToast('❌ Error al guardar la suscripción', 'error');
+      }
+    };
+
+    return (
+      <Modal onClose={() => { setShowModal(false); setEditingSubscription(null); }}>
+        <h2 style={{ marginBottom: '24px', fontSize: '24px', fontWeight: '700' }}>
+          {editingSubscription ? '✏️ Editar Suscripción' : '🔄 Nueva Suscripción'}
+        </h2>
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Nombre</label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({...formData, name: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              placeholder="Ej: Netflix, Spotify"
+              required
+            />
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Monto</label>
+            <input
+              type="number"
+              step="0.01"
+              value={formData.amount}
+              onChange={(e) => setFormData({...formData, amount: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              required
+            />
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Frecuencia</label>
+            <select
+              value={formData.billing_cycle}
+              onChange={(e) => setFormData({...formData, billing_cycle: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              required
+            >
+              <option value="monthly">Mensual</option>
+              <option value="yearly">Anual</option>
+              <option value="weekly">Semanal</option>
+            </select>
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Próximo cobro</label>
+            <input
+              type="date"
+              value={formData.next_billing_date}
+              onChange={(e) => setFormData({...formData, next_billing_date: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              required
+            />
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Cuenta</label>
+            <select
+              value={formData.account_id}
+              onChange={(e) => setFormData({...formData, account_id: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              required
+            >
+              {accounts.map(acc => (
+                <option key={acc.id} value={acc.id}>{acc.name}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Categoría</label>
+            <input
+              type="text"
+              value={formData.category}
+              onChange={(e) => setFormData({...formData, category: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              placeholder="Ej: Entretenimiento, Software"
+            />
+          </div>
+          
+          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+            <button type="button" onClick={() => setShowModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: 'transparent', color: '#fff', cursor: 'pointer' }}>
+              Cancelar
+            </button>
+            <button type="submit" style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#10b981', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>
+              Guardar
+            </button>
+          </div>
+        </form>
+      </Modal>
+    );
+  };
+
+  const AddPendingPaymentModal = () => {
+    const [formData, setFormData] = useState(() => {
+      if (editingPendingPayment) {
+        return {
+          description: editingPendingPayment.description,
+          amount: editingPendingPayment.amount.toString(),
+          due_date: editingPendingPayment.due_date,
+          category: editingPendingPayment.category,
+          account_id: editingPendingPayment.account_id,
+          notes: editingPendingPayment.notes || ''
+        };
+      }
+      
+      return {
+        description: '',
+        amount: '',
+        due_date: new Date().toISOString().split('T')[0],
+        category: '',
+        account_id: accounts.length > 0 ? accounts[0].id : '',
+        notes: ''
+      };
+    });
+
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      try {
+        if (editingPendingPayment) {
+          const { data, error } = await supabase
+            .from('pending_payments')
+            .update({
+              description: formData.description,
+              amount: parseFloat(formData.amount),
+              due_date: formData.due_date,
+              category: formData.category,
+              account_id: formData.account_id,
+              notes: formData.notes
+            })
+            .eq('id', editingPendingPayment.id)
+            .select();
+
+          if (error) throw error;
+          
+          setPendingPayments(pendingPayments.map(p => 
+            p.id === editingPendingPayment.id ? data[0] : p
+          ));
+          showToast('✅ Pago pendiente actualizado', 'success');
+        } else {
+          const { data, error } = await supabase
+            .from('pending_payments')
+            .insert([{
+              user_id: session.user.id,
+              description: formData.description,
+              amount: parseFloat(formData.amount),
+              due_date: formData.due_date,
+              category: formData.category,
+              account_id: formData.account_id,
+              notes: formData.notes,
+              is_paid: false
+            }])
+            .select();
+
+          if (error) throw error;
+          
+          setPendingPayments([...pendingPayments, data[0]]);
+          showToast('✅ Pago pendiente creado', 'success');
+        }
+        
+        setShowModal(false);
+        setEditingPendingPayment(null);
+      } catch (error) {
+        console.error('Error:', error);
+        showToast('❌ Error al guardar el pago pendiente', 'error');
+      }
+    };
+
+    return (
+      <Modal onClose={() => { setShowModal(false); setEditingPendingPayment(null); }}>
+        <h2 style={{ marginBottom: '24px', fontSize: '24px', fontWeight: '700' }}>
+          {editingPendingPayment ? '✏️ Editar Pago Pendiente' : '⏳ Nuevo Pago Pendiente'}
+        </h2>
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Descripción</label>
+            <input
+              type="text"
+              value={formData.description}
+              onChange={(e) => setFormData({...formData, description: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              placeholder="Ej: Pago de servicios, Deuda"
+              required
+            />
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Monto</label>
+            <input
+              type="number"
+              step="0.01"
+              value={formData.amount}
+              onChange={(e) => setFormData({...formData, amount: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              required
+            />
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Fecha de vencimiento</label>
+            <input
+              type="date"
+              value={formData.due_date}
+              onChange={(e) => setFormData({...formData, due_date: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              required
+            />
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Cuenta</label>
+            <select
+              value={formData.account_id}
+              onChange={(e) => setFormData({...formData, account_id: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              required
+            >
+              {accounts.map(acc => (
+                <option key={acc.id} value={acc.id}>{acc.name}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Categoría</label>
+            <input
+              type="text"
+              value={formData.category}
+              onChange={(e) => setFormData({...formData, category: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff' }}
+              placeholder="Ej: Servicios, Deudas"
+            />
+          </div>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Notas (opcional)</label>
+            <textarea
+              value={formData.notes}
+              onChange={(e) => setFormData({...formData, notes: e.target.value})}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#fff', minHeight: '80px' }}
+              placeholder="Notas adicionales..."
+            />
           </div>
           
           <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
@@ -1629,12 +2111,336 @@ const ExpenseTracker = ({ session }) => {
             })}
           </div>
         </div>
+
+        {/* Suscripciones */}
+        <div style={{ marginBottom: '32px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h2 style={{ fontSize: '20px', fontWeight: '600' }}>🔄 Suscripciones</h2>
+            <button
+              onClick={() => {
+                setEditingSubscription(null);
+                setModalType('subscription');
+                setShowModal(true);
+              }}
+              style={{
+                background: '#10b981',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                color: '#fff',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '600'
+              }}
+            >
+              + Nueva Suscripción
+            </button>
+          </div>
+          
+          <div style={{ display: 'grid', gap: '16px' }}>
+            {subscriptions.filter(s => s.is_active).map(sub => {
+              const daysUntilBilling = Math.ceil(
+                (new Date(sub.next_billing_date) - new Date()) / (1000 * 60 * 60 * 24)
+              );
+              const isUpcoming = daysUntilBilling <= 7 && daysUntilBilling >= 0;
+              
+              return (
+                <div
+                  key={sub.id}
+                  style={{
+                    background: '#1f1f1f',
+                    border: `1px solid ${isUpcoming ? '#f59e0b' : '#2a2a2a'}`,
+                    padding: '20px',
+                    borderRadius: '12px'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '18px', fontWeight: '600', marginBottom: '4px' }}>
+                        {sub.name}
+                      </div>
+                      <div style={{ fontSize: '13px', opacity: 0.6 }}>
+                        {sub.category && `${sub.category} • `}
+                        {sub.billing_cycle === 'monthly' ? 'Mensual' : sub.billing_cycle === 'yearly' ? 'Anual' : 'Semanal'}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '24px', fontWeight: '700', color: '#ef4444' }}>
+                      {formatCurrency(sub.amount)}
+                    </div>
+                  </div>
+                  
+                  <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    marginBottom: '12px',
+                    padding: '8px 12px',
+                    background: isUpcoming ? 'rgba(245, 158, 11, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                    borderRadius: '6px',
+                    fontSize: '13px'
+                  }}>
+                    <span style={{ opacity: 0.8 }}>
+                      {isUpcoming ? '⚠️ ' : '📅 '}
+                      Próximo cobro: {new Date(sub.next_billing_date).toLocaleDateString('es-AR')}
+                    </span>
+                    {isUpcoming && (
+                      <span style={{ color: '#f59e0b', fontWeight: '600' }}>
+                        ({daysUntilBilling} día{daysUntilBilling !== 1 ? 's' : ''})
+                      </span>
+                    )}
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={() => editSubscription(sub)}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid #2a2a2a',
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        transition: 'all 0.2s',
+                        flex: 1,
+                        fontWeight: '500',
+                        color: '#ffffff'
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.background = '#10b98110';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                    >
+                      ✏️ Editar
+                    </button>
+                    <button
+                      onClick={() => deleteSubscription(sub.id)}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid #2a2a2a',
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        transition: 'all 0.2s',
+                        flex: 1,
+                        color: '#ffffff'
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.background = '#ef444410';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      title="Eliminar"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            
+            {subscriptions.filter(s => s.is_active).length === 0 && (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: '40px', 
+                opacity: 0.6,
+                background: '#1f1f1f',
+                borderRadius: '12px',
+                border: '1px dashed #2a2a2a'
+              }}>
+                No tienes suscripciones activas
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Pagos Pendientes */}
+        <div style={{ marginBottom: '32px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h2 style={{ fontSize: '20px', fontWeight: '600' }}>⏳ Pagos Pendientes</h2>
+            <button
+              onClick={() => {
+                setEditingPendingPayment(null);
+                setModalType('pending_payment');
+                setShowModal(true);
+              }}
+              style={{
+                background: '#10b981',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                color: '#fff',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '600'
+              }}
+            >
+              + Nuevo Pago
+            </button>
+          </div>
+          
+          <div style={{ display: 'grid', gap: '16px' }}>
+            {pendingPayments.map(payment => {
+              const daysUntilDue = Math.ceil(
+                (new Date(payment.due_date) - new Date()) / (1000 * 60 * 60 * 24)
+              );
+              const isOverdue = daysUntilDue < 0;
+              const isUpcoming = daysUntilDue <= 3 && daysUntilDue >= 0;
+              
+              return (
+                <div
+                  key={payment.id}
+                  style={{
+                    background: '#1f1f1f',
+                    border: `1px solid ${isOverdue ? '#ef4444' : isUpcoming ? '#f59e0b' : '#2a2a2a'}`,
+                    padding: '20px',
+                    borderRadius: '12px'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '18px', fontWeight: '600', marginBottom: '4px' }}>
+                        {payment.description}
+                      </div>
+                      <div style={{ fontSize: '13px', opacity: 0.6 }}>
+                        {payment.category && `${payment.category} • `}
+                        Vence: {new Date(payment.due_date).toLocaleDateString('es-AR')}
+                      </div>
+                      {payment.notes && (
+                        <div style={{ fontSize: '12px', opacity: 0.5, marginTop: '6px', fontStyle: 'italic' }}>
+                          {payment.notes}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '24px', fontWeight: '700', color: '#ef4444' }}>
+                      {formatCurrency(payment.amount)}
+                    </div>
+                  </div>
+                  
+                  <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    marginBottom: '12px',
+                    padding: '8px 12px',
+                    background: isOverdue ? 'rgba(239, 68, 68, 0.1)' : isUpcoming ? 'rgba(245, 158, 11, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                    borderRadius: '6px',
+                    fontSize: '13px'
+                  }}>
+                    {isOverdue ? (
+                      <span style={{ color: '#ef4444', fontWeight: '600' }}>
+                        ⚠️ Vencido ({Math.abs(daysUntilDue)} día{Math.abs(daysUntilDue) !== 1 ? 's' : ''})
+                      </span>
+                    ) : isUpcoming ? (
+                      <span style={{ color: '#f59e0b', fontWeight: '600' }}>
+                        ⏰ Próximo a vencer ({daysUntilDue} día{daysUntilDue !== 1 ? 's' : ''})
+                      </span>
+                    ) : (
+                      <span style={{ opacity: 0.8 }}>
+                        📅 Faltan {daysUntilDue} días
+                      </span>
+                    )}
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={() => markAsPaid(payment)}
+                      style={{
+                        background: '#10b981',
+                        border: 'none',
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        transition: 'all 0.2s',
+                        flex: 1,
+                        fontWeight: '600',
+                        color: '#ffffff'
+                      }}
+                    >
+                      ✓ Marcar como pagado
+                    </button>
+                    <button
+                      onClick={() => editPendingPayment(payment)}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid #2a2a2a',
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        transition: 'all 0.2s',
+                        color: '#ffffff'
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.background = '#10b98110';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      onClick={() => deletePendingPayment(payment.id)}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid #2a2a2a',
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        transition: 'all 0.2s',
+                        color: '#ffffff'
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.background = '#ef444410';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.color = '#ffffff';
+                      }}
+                      title="Eliminar"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            
+            {pendingPayments.length === 0 && (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: '40px', 
+                opacity: 0.6,
+                background: '#1f1f1f',
+                borderRadius: '12px',
+                border: '1px dashed #2a2a2a'
+              }}>
+                No tienes pagos pendientes
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Modals */}
       {showModal && modalType === 'transaction' && <AddTransactionModal />}
       {showModal && modalType === 'account' && <AddAccountModal />}
       {showModal && modalType === 'installment' && <AddInstallmentModal />}
+      {showModal && modalType === 'subscription' && <AddSubscriptionModal />}
+      {showModal && modalType === 'pending_payment' && <AddPendingPaymentModal />}
 
       <style>{`
         * { box-sizing: border-box; }
